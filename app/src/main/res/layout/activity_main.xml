@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:gravity="center_horizontal">
+
+    <!-- 状态与倒计时显示区 -->
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="待机中，请点击开始"
+        android:textSize="22sp"
+        android:textColor="#333333"
+        android:layout_marginTop="20dp"/>
+
+    <TextView
+        android:id="@+id/tvTimer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="00:00"
+        android:textSize="64sp"
+        android:textStyle="bold"
+        android:textColor="#D32F2F"
+        android:layout_marginTop="10dp"
+        android:layout_marginBottom="10dp"/>
+
+    <TextView
+        android:id="@+id/tvSensorDebug"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="传感器状态: 未激活"
+        android:textSize="14sp"
+        android:textColor="#888888"
+        android:layout_marginBottom="30dp"/>
+
+    <!-- 设置区 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#F5F5F5"
+        android:padding="16dp">
+
+        <TextView
+            android:id="@+id/tvSitLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="久坐时长: 45 分钟"
+            android:textSize="16sp"/>
+        <SeekBar
+            android:id="@+id/sbSitTime"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="120"
+            android:progress="45"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="16dp"/>
+
+        <TextView
+            android:id="@+id/tvStandLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="站立时长: 2 分钟"
+            android:textSize="16sp"/>
+        <SeekBar
+            android:id="@+id/sbStandTime"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="15"
+            android:progress="2"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="16dp"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="检测模式:"
+            android:textSize="16sp"
+            android:layout_marginBottom="8dp"/>
+
+        <RadioGroup
+            android:id="@+id/rgMode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+            <RadioButton
+                android:id="@+id/rbPocket"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="裤兜模式 (通过手机倾斜角度判断)"
+                android:checked="true"/>
+            <RadioButton
+                android:id="@+id/rbDesk"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="桌面模式 (通过拿起手机走动判断)"/>
+        </RadioGroup>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"/>
+
+    <!-- 启动按钮 -->
+    <Button
+        android:id="@+id/btnToggle"
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        android:text="开 始 监 控"
+        android:textSize="20sp"
+        android:backgroundTint="#1976D2"
+        android:textColor="#FFFFFF"/>
+
+</LinearLayout>
