@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
     package="com.example.standup">
 
     <!-- 核心权限申请 -->
@@ -9,6 +8,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 新增：申请加入后台白名单，防止熄屏被杀 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:allowBackup="true"
@@ -26,11 +27,12 @@
             </intent-filter>
         </activity>
 
-        <!-- 注册防久坐后台服务 -->
+        <!-- stopWithTask="false" 保证划掉最近任务卡片时服务不死 -->
         <service
             android:name=".StandUpService"
             android:enabled="true"
             android:exported="false"
+            android:stopWithTask="false"
             android:foregroundServiceType="specialUse" />
     </application>
 </manifest>
