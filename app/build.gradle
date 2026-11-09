@@ -10,9 +10,10 @@ android {
     defaultConfig {
         applicationId "com.example.standup"
         minSdk 26
-        targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        // 关键修改：锁定 targetSdk 为 30，彻底绕过新版安卓对后台弹窗、后台自启的严苛限制
+        targetSdk 30
+        versionCode 2
+        versionName "2.0"
     }
 
     compileOptions {
