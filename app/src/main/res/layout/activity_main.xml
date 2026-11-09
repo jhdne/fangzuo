@@ -3,52 +3,66 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="24dp"
+    android:padding="28dp"
+    android:background="#FAFAFA"
     android:gravity="center_horizontal">
 
-    <!-- 状态与倒计时显示区 -->
+    <!-- 顶部清爽标题 -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="起 立"
+        android:textSize="28sp"
+        android:textStyle="bold"
+        android:textColor="#1976D2"
+        android:layout_marginTop="16dp"/>
+
+    <!-- 状态与超大倒计时显示区 -->
     <TextView
         android:id="@+id/tvStatus"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="待机中，请点击开始"
-        android:textSize="22sp"
-        android:textColor="#333333"
-        android:layout_marginTop="20dp"/>
+        android:textSize="20sp"
+        android:textColor="#555555"
+        android:layout_marginTop="24dp"/>
 
     <TextView
         android:id="@+id/tvTimer"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="00:00"
-        android:textSize="64sp"
+        android:textSize="72sp"
         android:textStyle="bold"
         android:textColor="#D32F2F"
-        android:layout_marginTop="10dp"
-        android:layout_marginBottom="10dp"/>
+        android:layout_marginTop="4dp"
+        android:layout_marginBottom="4dp"/>
 
     <TextView
         android:id="@+id/tvSensorDebug"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="传感器状态: 未激活"
-        android:textSize="14sp"
-        android:textColor="#888888"
-        android:layout_marginBottom="30dp"/>
+        android:textSize="13sp"
+        android:textColor="#999999"
+        android:layout_marginBottom="28dp"/>
 
-    <!-- 设置区 -->
+    <!-- 设置卡片区 (带阴影感白底) -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:background="#F5F5F5"
-        android:padding="16dp">
+        android:background="#FFFFFF"
+        android:elevation="4dp"
+        android:padding="20dp">
 
         <TextView
             android:id="@+id/tvSitLabel"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="久坐时长: 45 分钟"
+            android:textStyle="bold"
+            android:textColor="#333333"
             android:textSize="16sp"/>
         <SeekBar
             android:id="@+id/sbSitTime"
@@ -56,14 +70,16 @@
             android:layout_height="wrap_content"
             android:max="120"
             android:progress="45"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="16dp"/>
+            android:layout_marginTop="10dp"
+            android:layout_marginBottom="20dp"/>
 
         <TextView
             android:id="@+id/tvStandLabel"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="站立时长: 2 分钟"
+            android:textStyle="bold"
+            android:textColor="#333333"
             android:textSize="16sp"/>
         <SeekBar
             android:id="@+id/sbStandTime"
@@ -71,13 +87,15 @@
             android:layout_height="wrap_content"
             android:max="15"
             android:progress="2"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="16dp"/>
+            android:layout_marginTop="10dp"
+            android:layout_marginBottom="20dp"/>
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="检测模式:"
+            android:textStyle="bold"
+            android:textColor="#333333"
             android:textSize="16sp"
             android:layout_marginBottom="8dp"/>
 
@@ -104,13 +122,14 @@
         android:layout_height="0dp"
         android:layout_weight="1"/>
 
-    <!-- 启动按钮 -->
+    <!-- 启动大按钮 -->
     <Button
         android:id="@+id/btnToggle"
         android:layout_width="match_parent"
-        android:layout_height="60dp"
+        android:layout_height="64dp"
         android:text="开 始 监 控"
         android:textSize="20sp"
+        android:textStyle="bold"
         android:backgroundTint="#1976D2"
         android:textColor="#FFFFFF"/>
 
