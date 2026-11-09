@@ -1,6 +1,7 @@
 package com.example.standup
 
 import android.Manifest
+import android.app.KeyguardManager
 import android.content.*
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -9,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.WindowManager
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -46,19 +48,49 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        turnScreenOnAndKeyguardOff()
         setContentView(R.layout.activity_main)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101)
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, arrayOf("android.permission.POST_NOTIFICATIONS"), 101)
             }
         }
 
-        // 新增：一键弹窗申请忽略电池优化（加入后台白名单）
         requestIgnoreBatteryOptimizations()
-
         initViews()
         loadSettings()
+
+        // 如果之前在运行（比如被划掉后重新打开），自动唤醒同步服务状态
+        if (prefs.getBoolean("IS_RUNNING", false)) {
+            isServiceRunning = true
+            updateUIState()
+            val intent = Intent(this, StandUpService::class.java).apply { action = "RESUME_CHECK" }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        }
+    }
+
+    // 允许在锁屏状态下直接点亮屏幕显示界面
+    private fun turnScreenOnAndKeyguardOff() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                        or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                        or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            )
+        }
+        val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            keyguardManager.requestDismissKeyguard(this, null)
+        }
     }
 
     private fun requestIgnoreBatteryOptimizations() {
@@ -125,6 +157,7 @@ class MainActivity : AppCompatActivity() {
         val standMin = if (sbStandTime.progress < 1) 1 else sbStandTime.progress
 
         val intent = Intent(this, StandUpService::class.java).apply {
+            action = "START_NEW"
             putExtra("SIT_MIN", sitMin)
             putExtra("STAND_MIN", standMin)
             putExtra("POCKET_MODE", rbPocket.isChecked)
@@ -189,12 +222,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        val filter = IntentFilter("STANDUP_UPDATE")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(updateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(updateReceiver, filter)
-        }
+        registerReceiver(updateReceiver, IntentFilter("STANDUP_UPDATE"))
     }
 
     override fun onPause() {
