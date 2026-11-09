@@ -3,11 +3,15 @@ package com.example.standup
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioTrack
 import android.os.*
 import androidx.core.app.NotificationCompat
 import kotlin.math.atan2
@@ -22,7 +26,6 @@ class StandUpService : Service(), SensorEventListener {
     private var standDurationSec = 2 * 60
     private var isPocketMode = true
 
-    // 使用硬件级时间戳，防止熄屏后读秒变慢或卡住
     private var sitEndTimeMillis = 0L
     private var remainingSitSec = 0
     private var remainingStandSec = 0
@@ -32,12 +35,15 @@ class StandUpService : Service(), SensorEventListener {
     private var isCurrentlyStanding = false
     private var debugSensorText = "传感器未激活 (省电中)"
 
+    private lateinit var prefs: SharedPreferences
     private lateinit var sensorManager: SensorManager
     private lateinit var vibrator: Vibrator
     private lateinit var wakeLock: PowerManager.WakeLock
     private lateinit var notificationManager: NotificationManager
-    private val handler = Handler(Looper.getMainLooper())
+    private lateinit var alarmManager: AlarmManager
+    private var silentAudioTrack: AudioTrack? = null
 
+    private val handler = Handler(Looper.getMainLooper())
     private val tickRunnable = object : Runnable {
         override fun run() {
             onTick()
@@ -47,42 +53,169 @@ class StandUpService : Service(), SensorEventListener {
 
     override fun onCreate() {
         super.onCreate()
+        prefs = getSharedPreferences("StandUpPrefs", Context.MODE_PRIVATE)
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "StandUp::WakeLock")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == "STOP") {
-            stopService()
+        val action = intent?.action
+
+        // 1. 用户主动点击停止
+        if (action == "STOP") {
+            stopServiceCompletely()
             return START_NOT_STICKY
         }
 
-        // 如果已经在运行且只是重新打开界面，不重置计时
-        if (currentState != State.IDLE && intent?.hasExtra("SIT_MIN") == false) {
-            return START_STICKY
+        // 启动前台通知与唤醒锁与无声音乐保活
+        startForeground(1, createNotification("正在后台强力运行中..."))
+        if (!wakeLock.isHeld) wakeLock.acquire()
+        startSilentAudioLoop()
+
+        // 2. 用户点击“开始监控”传入了新参数
+        if (action == "START_NEW") {
+            sitDurationSec = intent.getIntExtra("SIT_MIN", 45) * 60
+            standDurationSec = intent.getIntExtra("STAND_MIN", 2) * 60
+            isPocketMode = intent.getBooleanExtra("POCKET_MODE", true)
+            prefs.edit().putBoolean("IS_RUNNING", true).apply()
+            transitionTo(State.SITTING_TIMER)
+        } 
+        // 3. 被划掉卡片后自动复活、或者被硬件闹钟唤醒，从硬盘恢复进度！
+        else {
+            val wasRunning = prefs.getBoolean("IS_RUNNING", false)
+            if (!wasRunning) {
+                stopServiceCompletely()
+                return START_NOT_STICKY
+            }
+            if (currentState == State.IDLE) {
+                restoreStateFromDisk()
+            }
         }
 
-        sitDurationSec = intent?.getIntExtra("SIT_MIN", 45)?.times(60) ?: (45 * 60)
-        standDurationSec = intent?.getIntExtra("STAND_MIN", 2)?.times(60) ?: (2 * 60)
-        isPocketMode = intent?.getBooleanExtra("POCKET_MODE", true) ?: true
-
-        if (!wakeLock.isHeld) wakeLock.acquire()
-        startForeground(1, createNotification("监控启动中..."))
-
-        transitionTo(State.SITTING_TIMER)
         handler.removeCallbacks(tickRunnable)
         handler.post(tickRunnable)
 
         return START_STICKY
     }
 
-    // 防止用户从最近任务列表“划掉”APP时服务被杀
+    // 核心黑科技1：生成内存级 0分贝 静音音频循环播放，彻底阻止系统熄屏冻结CPU！
+    private fun startSilentAudioLoop() {
+        if (silentAudioTrack != null) return
+        try {
+            val sampleRate = 8000
+            val bufferSize = sampleRate * 2 // 1秒钟的 16-bit 单声道数据
+            val silentBuffer = ByteArray(bufferSize) // 全是0，绝对静音
+
+            val audioAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build()
+
+            val audioFormat = AudioFormat.Builder()
+                .setSampleRate(sampleRate)
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                .build()
+
+            silentAudioTrack = AudioTrack(
+                audioAttributes, audioFormat, bufferSize,
+                AudioTrack.MODE_STATIC, AudioManager.AUDIO_SESSION_ID_GENERATE
+            ).apply {
+                write(silentBuffer, 0, bufferSize)
+                setLoopPoints(0, sampleRate, -1) // 无限硬件循环，不占CPU
+                play()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun stopSilentAudioLoop() {
+        try {
+            silentAudioTrack?.stop()
+            silentAudioTrack?.release()
+        } catch (e: Exception) {}
+        silentAudioTrack = null
+    }
+
+    // 核心黑科技2：当卡片被划掉时，立即保存进度，并定一个1秒后的硬件闹钟把自己复活！
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        // 保持服务继续运行，不做销毁
+        if (prefs.getBoolean("IS_RUNNING", false)) {
+            saveStateToDisk()
+            scheduleHardwareAlarm(System.currentTimeMillis() + 1000L)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (prefs.getBoolean("IS_RUNNING", false)) {
+            saveStateToDisk()
+            scheduleHardwareAlarm(System.currentTimeMillis() + 1000L)
+        }
+    }
+
+    // 注册系统级硬件闹钟（即使进程死透，时间一到也会被系统强制拉起）
+    private fun scheduleHardwareAlarm(triggerAtWallTimeMillis: Long) {
+        val intent = Intent(this, StandUpService::class.java).apply { action = "ALARM_WAKEUP" }
+        val pi = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            PendingIntent.getForegroundService(this, 999, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        } else {
+            PendingIntent.getService(this, 999, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        }
+        val showIntent = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val clockInfo = AlarmManager.AlarmClockInfo(triggerAtWallTimeMillis, showIntent)
+        alarmManager.setAlarmClock(clockInfo, pi)
+    }
+
+    private fun cancelHardwareAlarm() {
+        val intent = Intent(this, StandUpService::class.java).apply { action = "ALARM_WAKEUP" }
+        val pi = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            PendingIntent.getForegroundService(this, 999, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        } else {
+            PendingIntent.getService(this, 999, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        }
+        alarmManager.cancel(pi)
+    }
+
+    private fun saveStateToDisk() {
+        prefs.edit().apply {
+            putString("SAVED_STATE", currentState.name)
+            putLong("SIT_END_MILLIS", sitEndTimeMillis)
+            putInt("REM_STAND_SEC", remainingStandSec)
+            putInt("SIT_DUR_SEC", sitDurationSec)
+            putInt("STAND_DUR_SEC", standDurationSec)
+            putBoolean("POCKET_MODE", isPocketMode)
+            apply()
+        }
+    }
+
+    private fun restoreStateFromDisk() {
+        sitDurationSec = prefs.getInt("SIT_DUR_SEC", 45 * 60)
+        standDurationSec = prefs.getInt("STAND_DUR_SEC", 2 * 60)
+        isPocketMode = prefs.getBoolean("POCKET_MODE", true)
+        sitEndTimeMillis = prefs.getLong("SIT_END_MILLIS", System.currentTimeMillis() + 60000L)
+        remainingStandSec = prefs.getInt("REM_STAND_SEC", standDurationSec)
+
+        val savedStateName = prefs.getString("SAVED_STATE", State.SITTING_TIMER.name) ?: State.SITTING_TIMER.name
+        currentState = State.valueOf(savedStateName)
+
+        if (currentState == State.SITTING_TIMER) {
+            val diff = sitEndTimeMillis - System.currentTimeMillis()
+            if (diff <= 0) {
+                transitionTo(State.ALERTING)
+            } else {
+                scheduleHardwareAlarm(sitEndTimeMillis)
+            }
+        } else if (currentState == State.ALERTING) {
+            transitionTo(State.ALERTING)
+        } else if (currentState == State.STANDING_TIMER || currentState == State.WAITING_TO_SIT) {
+            startSensors()
+        }
     }
 
     private fun transitionTo(newState: State) {
@@ -94,13 +227,15 @@ class StandUpService : Service(), SensorEventListener {
             State.SITTING_TIMER -> {
                 stopVibration()
                 stopSensors()
-                // 记录未来的硬件目标时间点
-                sitEndTimeMillis = SystemClock.elapsedRealtime() + (sitDurationSec * 1000L)
+                sitEndTimeMillis = System.currentTimeMillis() + (sitDurationSec * 1000L)
                 remainingSitSec = sitDurationSec
                 remainingStandSec = standDurationSec
+                // 设定久坐结束时的硬件闹钟保底
+                scheduleHardwareAlarm(sitEndTimeMillis)
             }
             State.ALERTING -> {
-                wakeUpScreen()
+                cancelHardwareAlarm()
+                popupActivityOverLockScreen() // 破壁点亮锁屏并弹出APP界面
                 startSensors()
                 startContinuousVibration()
             }
@@ -113,14 +248,14 @@ class StandUpService : Service(), SensorEventListener {
             }
             else -> {}
         }
+        saveStateToDisk()
         broadcastUpdate()
     }
 
     private fun onTick() {
         when (currentState) {
             State.SITTING_TIMER -> {
-                // 用硬件时钟相减，哪怕CPU休眠也不会漏算时间
-                val diff = sitEndTimeMillis - SystemClock.elapsedRealtime()
+                val diff = sitEndTimeMillis - System.currentTimeMillis()
                 remainingSitSec = (diff / 1000).toInt()
                 if (remainingSitSec <= 0) {
                     remainingSitSec = 0
@@ -128,9 +263,8 @@ class StandUpService : Service(), SensorEventListener {
                 }
             }
             State.ALERTING -> {
-                // 每隔5秒重新触发一次震动，防止部分手机熄屏自动掐断震动
-                if (standConfirmSec == 0) startContinuousVibration()
-                
+                // 持续触发震动
+                startContinuousVibration()
                 if (isCurrentlyStanding) {
                     standConfirmSec++
                     if (standConfirmSec >= 2) {
@@ -144,6 +278,7 @@ class StandUpService : Service(), SensorEventListener {
                 if (isCurrentlyStanding) {
                     sitConfirmSec = 0
                     remainingStandSec--
+                    saveStateToDisk()
                     if (remainingStandSec <= 0) {
                         transitionTo(State.WAITING_TO_SIT)
                     }
@@ -167,6 +302,25 @@ class StandUpService : Service(), SensorEventListener {
             else -> {}
         }
         broadcastUpdate()
+    }
+
+    // 核心黑科技3：时间一到，直接点亮锁屏并把界面弹到最前面，彻底解除后台传感器与震动限制！
+    private fun popupActivityOverLockScreen() {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            val screenLock = pm.newWakeLock(
+                PowerManager.FULL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
+                "StandUp::PopupWake"
+            )
+            screenLock.acquire(10000)
+
+            val popupIntent = Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            startActivity(popupIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
@@ -196,7 +350,7 @@ class StandUpService : Service(), SensorEventListener {
     private fun startSensors() {
         val sensorType = if (isPocketMode) Sensor.TYPE_ACCELEROMETER else Sensor.TYPE_LINEAR_ACCELERATION
         val sensor = sensorManager.getDefaultSensor(sensorType)
-        sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_NORMAL)
+        sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_UI)
     }
 
     private fun stopSensors() {
@@ -204,12 +358,11 @@ class StandUpService : Service(), SensorEventListener {
         debugSensorText = "传感器未激活 (省电中)"
     }
 
-    // 关键修复：使用 USAGE_ALARM 闹钟通道，允许在后台和熄屏状态下强制震动！
     private fun startContinuousVibration() {
-        val pattern = longArrayOf(0, 800, 400)
+        val pattern = longArrayOf(0, 800, 300)
         val audioAttributes = AudioAttributes.Builder()
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .setUsage(AudioAttributes.USAGE_ALARM) // 伪装成系统闹钟
+            .setUsage(AudioAttributes.USAGE_ALARM)
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -237,12 +390,6 @@ class StandUpService : Service(), SensorEventListener {
         vibrator.cancel()
     }
 
-    private fun wakeUpScreen() {
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        val screenLock = pm.newWakeLock(PowerManager.SCREEN_DIM_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP, "StandUp::ScreenWake")
-        screenLock.acquire(5000)
-    }
-
     private fun broadcastUpdate() {
         val statusText = when (currentState) {
             State.IDLE -> "待机中"
@@ -254,7 +401,6 @@ class StandUpService : Service(), SensorEventListener {
         val timeSec = if (currentState == State.SITTING_TIMER) remainingSitSec else remainingStandSec
         val timeStr = String.format("%02d:%02d", timeSec / 60, timeSec % 60)
 
-        // 实时刷新锁屏通知栏，防止系统把服务当成僵尸进程杀掉
         if (currentState != State.IDLE) {
             notificationManager.notify(1, createNotification("$statusText ($timeStr)"))
         }
@@ -269,25 +415,36 @@ class StandUpService : Service(), SensorEventListener {
     }
 
     private fun createNotification(text: String): Notification {
-        val channelId = "standup_channel"
+        val channelId = "standup_keepalive_channel"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, "防久坐实时状态", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(channelId, "防久坐核心服务", NotificationManager.IMPORTANCE_HIGH).apply {
+                setSound(null, null)
+                enableVibration(false)
+            }
             notificationManager.createNotificationChannel(channel)
         }
-        val pendingIntent = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val fullScreenIntent = Intent(this, MainActivity::class.java)
+        val fullScreenPendingIntent = PendingIntent.getActivity(this, 0, fullScreenIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
         return NotificationCompat.Builder(this, channelId)
-            .setContentTitle("起立 - 防久坐监控")
+            .setContentTitle("起立 - 防久坐运行中")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-            .setOngoing(true) // 设置为不可划掉的常驻通知
-            .setContentIntent(pendingIntent)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setOngoing(true)
+            .setFullScreenIntent(fullScreenPendingIntent, true)
+            .setContentIntent(fullScreenPendingIntent)
             .build()
     }
 
-    private fun stopService() {
+    private fun stopServiceCompletely() {
+        prefs.edit().putBoolean("IS_RUNNING", false).apply()
         handler.removeCallbacks(tickRunnable)
+        cancelHardwareAlarm()
         stopVibration()
         stopSensors()
+        stopSilentAudioLoop()
         if (wakeLock.isHeld) wakeLock.release()
         currentState = State.IDLE
         broadcastUpdate()
