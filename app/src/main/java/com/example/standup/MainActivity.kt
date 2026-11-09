@@ -4,8 +4,11 @@ import android.Manifest
 import android.content.*
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -27,7 +30,6 @@ class MainActivity : AppCompatActivity() {
     private var isServiceRunning = false
     private lateinit var prefs: SharedPreferences
 
-    // 接收后台Service发来的每秒更新
     private val updateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             intent ?: return
@@ -46,15 +48,33 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // 请求通知权限 (Android 13+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101)
             }
         }
 
+        // 新增：一键弹窗申请忽略电池优化（加入后台白名单）
+        requestIgnoreBatteryOptimizations()
+
         initViews()
         loadSettings()
+    }
+
+    private fun requestIgnoreBatteryOptimizations() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
+                try {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
     }
 
     private fun initViews() {
@@ -136,10 +156,10 @@ class MainActivity : AppCompatActivity() {
 
         if (isServiceRunning) {
             btnToggle.text = "停 止 监 控"
-            btnToggle.setBackgroundColor(Color.parseColor("#D32F2F")) // 红色
+            btnToggle.setBackgroundColor(Color.parseColor("#D32F2F"))
         } else {
             btnToggle.text = "开 始 监 控"
-            btnToggle.setBackgroundColor(Color.parseColor("#1976D2")) // 蓝色
+            btnToggle.setBackgroundColor(Color.parseColor("#1976D2"))
         }
     }
 
